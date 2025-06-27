@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Image from "next/image";
 import {
   Card,
   CardContent,
@@ -10,10 +12,14 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { GeminiApiResponse } from "@/types/api";
+import { useFactCheck } from "@/contexts/FactCheckContext";
 
 export default function HomeComponent() {
   const [textInput, setTextInput] = useState("");
   const [pastedImages, setPastedImages] = useState<string[]>([]);
+  const router = useRouter();
+  const { setResults, isLoading, setIsLoading } = useFactCheck();
 
   const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = event.clipboardData.items;
@@ -49,9 +55,52 @@ export default function HomeComponent() {
     setPastedImages(prevImages => prevImages.filter((_, i) => i !== index));
   };
 
-  const handleAnalyze = () => {
-    // TODO: Implement fact-checking logic for textInput and/or pastedImages
-    console.log("Analyzing content...", { textInput, pastedImages });
+  const handleAnalyze = async () => {
+    setIsLoading(true);
+
+    try {
+      // Check if the text input is a URL
+      const isUrl =
+        textInput.trim() &&
+        (textInput.trim().startsWith("http://") ||
+          textInput.trim().startsWith("https://") ||
+          textInput.trim().includes("www."));
+
+      const requestBody = {
+        text: isUrl ? undefined : textInput.trim() || undefined,
+        url: isUrl ? textInput.trim() : undefined,
+        images: pastedImages.length > 0 ? pastedImages : undefined,
+      };
+
+      const response = await fetch("/api/fact-check", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to fact-check content");
+      }
+
+      const result: GeminiApiResponse = await response.json();
+
+      // Store results in context and navigate to results page
+      setResults(result);
+      router.push("/results");
+    } catch (error) {
+      console.error("Error during fact-check:", error);
+      // Show error to user - you might want to add error state to the component
+      alert(
+        error instanceof Error
+          ? error.message
+          : "An error occurred while fact-checking"
+      );
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const hasContent = textInput.trim() || pastedImages.length > 0;
@@ -83,10 +132,13 @@ export default function HomeComponent() {
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   {pastedImages.map((image, index) => (
                     <div key={index} className="relative group">
-                      <img
+                      <Image
                         src={image}
                         alt={`Pasted content ${index + 1}`}
+                        width={200}
+                        height={160}
                         className="h-40 w-full rounded-md object-cover bg-black/20"
+                        unoptimized
                       />
                       <button
                         onClick={() => removeImage(index)}
@@ -128,10 +180,10 @@ export default function HomeComponent() {
             {/* Analyze Button */}
             <Button
               onClick={handleAnalyze}
-              disabled={!hasContent}
+              disabled={!hasContent || isLoading}
               className="w-full bg-gray-200 hover:bg-gray-300 disabled:bg-gray-800 disabled:text-gray-500 text-black font-medium py-2.5 mt-4"
             >
-              Analyze
+              {isLoading ? "Analyzing..." : "Analyze"}
             </Button>
           </CardContent>
         </Card>
