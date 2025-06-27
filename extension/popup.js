@@ -266,14 +266,27 @@ function createSelectionOverlay() {
 
     // Capture the selected area
     try {
-      // We need to communicate with the extension to capture this specific area
-      // For now, we'll capture the full page and let the API know the coordinates
+      // Calculate coordinates accounting for device pixel ratio and zoom
+      // getBoundingClientRect() gives CSS pixels, but screenshots are in device pixels
+      const devicePixelRatio = window.devicePixelRatio || 1;
+      const zoomLevel = window.outerWidth / window.innerWidth;
+
       const selection = {
-        x: rect.left,
-        y: rect.top,
+        x: Math.round(rect.left * devicePixelRatio),
+        y: Math.round(rect.top * devicePixelRatio),
+        width: Math.round(rect.width * devicePixelRatio),
+        height: Math.round(rect.height * devicePixelRatio),
+      };
+
+      console.log("Original rect:", {
+        left: rect.left,
+        top: rect.top,
         width: rect.width,
         height: rect.height,
-      };
+      });
+      console.log("Device pixel ratio:", devicePixelRatio);
+      console.log("Zoom level:", zoomLevel);
+      console.log("Final selection coordinates:", selection);
 
       // Send message to background script
       chrome.runtime.sendMessage({
