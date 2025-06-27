@@ -3,14 +3,8 @@
   "name": "FactLens Screenshot Checker",
   "version": "1.0.0",
   "description": "Take screenshots and fact-check visual content instantly",
-  "permissions": [
-    "activeTab",
-    "storage",
-    "scripting"
-  ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
+  "permissions": ["activeTab", "storage", "scripting"],
+  "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html",
     "default_title": "FactLens - Screenshot Fact Check",
@@ -30,4 +24,4 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   }
-} 
+}
