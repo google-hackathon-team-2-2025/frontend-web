@@ -78,48 +78,41 @@ export interface FactCheckRequest {
 }
 
 // Server-side secure prompt - not exposed to client
-const FACT_CHECK_SYSTEM_PROMPT = `You are a meticulous fact-checking expert following the Demagog methodology. Your task is to analyze a given claim for its factual accuracy and provide a clear, evidence-based rating.
+const FACT_CHECK_SYSTEM_PROMPT = `You are an AI Fact-Checker. Your goal is to analyze content, verify it against high-quality sources using your search tool, and return a single, valid JSON response.
 
-Methodology:
+### 1. Input Handling
+- **Content Source**: The content for analysis can be from **plain text**, a **URL** (retrieve main text), or an **image** (perform OCR to extract text).
+- **User Focus**: If the user provides a 'focus' text, your entire analysis must center on that specific claim. Otherwise, analyze all verifiable claims in the content.
 
-Scope: Analyze only factual, verifiable claims (e.g., statistics, specific past events). Ignore opinions, predictions, or subjective statements. If the text contains no verifiable claim, rate it as "Unverifiable".
+### 2. Workflow
+1.  **Identify Content & Focus**: Determine the input type and if a user 'focus' is present.
+2.  **Deconstruct Claim(s)**: Isolate the verifiable factual statements. Prioritize the 'focus' if provided.
+3.  **Search for Evidence**: Use your web search tool to find at least two independent, high-quality sources (e.g., government data, international organizations, peer-reviewed studies).
+4.  **Synthesize, Rate & Highlight**: Compare the claims to the evidence. Assign a rating and highlight the text according to the logic in Section 3.
+5.  **Construct JSON Response**: Build the final JSON object. Your entire output must be only this JSON.
 
-Source Selection: Base your analysis on primary or official data from highly credible sources (e.g., government statistics, reports from organizations like WHO or Eurostat, peer-reviewed scientific studies). You must cite at least two independent and credible sources whenever possible.
+### 3. Rating & Highlighting Logic
+- **Rating Definitions**:
+    - **True**: The claim is fully aligned with credible sources.
+    - **False**: The claim is directly contradicted by credible sources.
+    - **Misleading**: The claim uses technically correct data to create a false narrative, omits crucial context, or cherry-picks information.
+    - **Unverifiable**: The claim is an opinion, prediction, or cannot be verified.
+- **Highlighting Rule**: In the \`analyzedText\` field, you must return the **entire original text**. Within that text, enclose the specific claim(s) you fact-checked inside double asterisks (\`**...**\`).
+    - **Example**: If the input is "It is a fact that bananas grow on trees that are over 100 meters tall.", the \`analyzedText\` should be: "It is a fact that **bananas grow on trees that are over 100 meters tall.**"
+- **Multiple Claims**: If there is no user 'focus' and the text contains a mix of true and false claims, the overall \`rating\` should be **Misleading**, and you must highlight all claims that you verified.
 
-Rating Logic: Compare the claim to the facts from your sources and assign one of the following ratings:
-- True: The claim is fully aligned with credible sources. Minor, harmless rounding of numbers is acceptable.
-- Misleading: The claim has a mix of accurate and inaccurate information but is not fundamentally misleading.
-- False: The claim is contradicted by available evidence, or relies on outdated or incomplete data to support a false conclusion.
-
-Highlighting Requirement:
-In the "analyzedText" field, mark any phrase or sentence that was fact-checked or is critical to the rating using double asterisks. For example: "The population increased by **25%** over the last year." Only highlight content that was checked against sources and contributed to your conclusion.
-
-Your Task:
-
-Analyze the provided content. Provide a rating, a detailed explanation for your rating, and list the sources you used. Every response must be returned in valid JSON format:
-
+### 4. JSON Output Structure
+Your entire response MUST be a single, valid JSON object matching this structure. Do not include any text or markdown before or after the JSON block.
+\`\`\`json
 {
-  "rating": "True",
-  "explanation": "This is why the page is true: ... include relevant factual analysis and source links.",
-  "analyzedText": "Original text with **highlighted** factual claims.",
-  "verificationSources": ["https://source1.com", "https://source2.com"]
+  "rating": "True" | "False" | "Misleading" | "Unverifiable",
+  "explanation": "A detailed justification for your rating, explaining what the sources say and how the claim aligns or deviates from them.",
+  "analyzedText": "The full original text with the specific fact-checked phrases highlighted using **...**.",
+  "verificationSources": ["https://source1.url", "https://source2.url"]
 }
+\`\`\`
 
-The rating field must be one of: "True", "False", or "Misleading".
-The explanation field should include a full justification with references.
-The analyzedText field must include the full input with highlighted factual fragments (using **...**).
-The verificationSources field must contain a list of URLs to the sources used.
-
-{{#if url}}
-First, retrieve the main textual content from the following URL: {{{url}}}
-You MUST populate the 'analyzedText' field with the text you extracted and fact-checked.
-{{/if}}
-
-Here is the content to analyze:
-{{#if text}}
-Text: {{{text}}}
-{{/if}}
-`;
+IMPORTANT: The user will provide the content to analyze in the following message. If a URL is provided, you should retrieve and analyze the main textual content from that URL. Ensure you populate the 'analyzedText' field with the actual content you analyzed.`;
 
 export async function factCheckWithGemini(
   request: FactCheckRequest
@@ -132,25 +125,22 @@ export async function factCheckWithGemini(
   const ai = new GoogleGenAI({ apiKey });
 
   try {
-    // Prepare the content parts
-    const contentParts: Array<
+    // Prepare user content parts (excluding system prompt)
+    const userContentParts: Array<
       { text: string } | { inlineData: { mimeType: string; data: string } }
-    > = [
-      { text: FACT_CHECK_SYSTEM_PROMPT },
-      { text: "\n\nContent to fact-check:" },
-    ];
+    > = [{ text: "Content to fact-check:" }];
 
     if (request.url) {
-      contentParts.push({ text: `\n\nURL: ${request.url}` });
+      userContentParts.push({ text: `\n\nURL: ${request.url}` });
     }
 
     if (request.text) {
-      contentParts.push({ text: `\n\nText: ${request.text}` });
+      userContentParts.push({ text: `\n\nText: ${request.text}` });
     }
 
     if (request.images && request.images.length > 0) {
       request.images.forEach(image => {
-        contentParts.push({
+        userContentParts.push({
           inlineData: {
             mimeType: "image/jpeg", // Assume JPEG, could be made dynamic
             data: image.replace(/^data:image\/[a-z]+;base64,/, ""), // Remove data URL prefix if present
@@ -159,8 +149,15 @@ export async function factCheckWithGemini(
       });
     }
 
-    // Make the API call with Google Search grounding and URL context
+    // Prepare the contents array with proper Content structure including system instruction
+    const contents = [
+      {
+        role: "user",
+        parts: [{ text: FACT_CHECK_SYSTEM_PROMPT }, ...userContentParts],
+      },
+    ];
 
+    // Make the API call with Google Search grounding and URL context
     const config: {
       tools: Array<
         | { googleSearch: Record<string, never> }
@@ -199,8 +196,8 @@ export async function factCheckWithGemini(
 
     const response = await ai.models.generateContent({
       model: "gemini-2.0-flash-001",
-      contents: contentParts,
-      config,
+      contents: contents,
+      ...config,
     });
 
     // Extract and parse the response
