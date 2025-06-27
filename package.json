@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
+    "build:extension": "node scripts/build-extension.js",
     "start": "next start",
     "lint": "next lint",
     "format": "prettier --write .",
@@ -42,9 +43,6 @@
   "lint-staged": {
     "*.{js,jsx,ts,tsx,json,css,scss,md}": [
       "prettier --write"
-    ],
-    "*.{js,jsx,ts,tsx}": [
-      "eslint --fix"
     ]
   }
 }

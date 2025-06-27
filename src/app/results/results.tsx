@@ -1,21 +1,102 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useFactCheck } from "@/contexts/FactCheckContext";
+import { GeminiApiResponse } from "@/types/api";
 
 function ResultsDisplay() {
-  const { results: response, clearResults } = useFactCheck();
+  const { results: contextResults, clearResults } = useFactCheck();
+  const [extensionResults, setExtensionResults] =
+    useState<GeminiApiResponse | null>(null);
+  const [response, setResponse] = useState<GeminiApiResponse | null>(null);
   const router = useRouter();
 
   useEffect(() => {
-    // If no results, redirect to home
-    if (!response) {
-      router.push("/");
+    // Check if we have extension results from URL parameters first
+    const loadResults = async () => {
+      try {
+        // Check URL parameters for extension data
+        if (typeof window !== "undefined") {
+          const urlParams = new URLSearchParams(window.location.search);
+          const extensionData = urlParams.get("extensionData");
+
+          if (extensionData) {
+            console.log("Found extension data in URL");
+            const results = JSON.parse(decodeURIComponent(extensionData));
+            setExtensionResults(results);
+            setResponse(results);
+            // Clean up URL by removing the parameter
+            const newUrl = new URL(window.location.href);
+            newUrl.searchParams.delete("extensionData");
+            window.history.replaceState({}, "", newUrl.pathname);
+            return;
+          }
+        }
+
+        // Try chrome storage as backup
+        try {
+          interface ChromeWindow extends Window {
+            chrome?: {
+              storage?: {
+                local?: {
+                  get: (keys: string[]) => Promise<Record<string, unknown>>;
+                  remove: (keys: string[]) => void;
+                };
+              };
+            };
+          }
+
+          const chromeWindow = window as ChromeWindow;
+          if (chromeWindow.chrome?.storage?.local) {
+            console.log("Trying to load extension results from storage...");
+            const result = await chromeWindow.chrome.storage.local.get([
+              "factCheckResults",
+            ]);
+
+            if (result.factCheckResults) {
+              console.log("Found extension results in storage");
+              setExtensionResults(result.factCheckResults as GeminiApiResponse);
+              setResponse(result.factCheckResults as GeminiApiResponse);
+              // Clear the storage after loading
+              chromeWindow.chrome.storage.local.remove(["factCheckResults"]);
+              return;
+            }
+          }
+        } catch (storageError) {
+          console.log("Chrome storage not available:", storageError);
+        }
+
+        // Fallback to context results (normal web app usage)
+        if (contextResults) {
+          console.log("Using context results");
+          setResponse(contextResults);
+        } else {
+          console.log("No results found in URL, storage, or context");
+        }
+      } catch (error) {
+        console.error("Error loading results:", error);
+        // Fallback to context
+        if (contextResults) {
+          setResponse(contextResults);
+        }
+      }
+    };
+
+    loadResults();
+  }, [contextResults]);
+
+  useEffect(() => {
+    // If no results, redirect to home after a delay
+    if (!response && !contextResults && !extensionResults) {
+      const timer = setTimeout(() => {
+        router.push("/");
+      }, 2000);
+      return () => clearTimeout(timer);
     }
-  }, [response, router]);
+  }, [response, contextResults, extensionResults, router]);
 
   const getStatusColor = (rating: string) => {
     switch (rating) {
